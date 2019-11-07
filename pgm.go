@@ -17,7 +17,6 @@ func check(e error) {
 // writePgmImage receives an array of bytes and writes it to a pgm file.
 // Note that this function is incomplete. Use the commented-out for loop to receive data from the distributor.
 func writePgmImage(p golParams, i ioChans) {
-	fmt.Println("wow")
 	_ = os.Mkdir("out", os.ModePerm)
 
 	filename := <-i.distributor.filename
