@@ -85,6 +85,7 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 	dChans.io.inputVal = inputVal
 	ioChans.distributor.inputVal = inputVal
 
+	//added out channels
 	outVal := make(chan byte)
 	dChans.io.outVal = outVal
 	ioChans.distributor.outVal = outVal
