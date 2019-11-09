@@ -1,6 +1,8 @@
 package main
 
-import "flag"
+import (
+	"flag"
+)
 
 // golParams provides the details of how to run the Game of Life and which image to load.
 type golParams struct {
@@ -120,6 +122,7 @@ func main() {
 	params.turns = 10000000000
 
 	startControlServer(params)
+	go getKeyboardCommand(nil)
 	gameOfLife(params, nil)
 	StopControlServer()
 }
