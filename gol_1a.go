@@ -14,7 +14,7 @@ func getNumberOfNeighbors(world [][]byte, y,x,height,width int) int {
 	for i:=0; i<3;i++{
 		for j:=0; j<3; j++{
 
-			if world[(y-1+i+height)%height][(x-1+j+width)%width] == 0xFF{
+			if world[(y-1+i+height)%height][(x-1+j+width)%width] == live{
 				neighbors++
 			}
 		}
