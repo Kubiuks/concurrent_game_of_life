@@ -141,21 +141,11 @@ func getNumberOfNeighbors(world [][]byte, y,x,height,width int) int {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
 
-	world:= createMatrix(p.imageHeight, p.imageWidth)
-
 	// Request the io goroutine to read in the image with the given filename.
-	d.io.command <- ioInput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x")
+	requestPGM(p,d)
 
-	// The io goroutine sends the requested image byte by byte, in rows.
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			val := <-d.io.inputVal
-			if val != 0 {
-				world[y][x] = val
-			}
-		}
-	}
+	// creating the initial world from input image
+	world := receiveWorld(p, d)
 
 	//creating slices of channels for workers
 	workersIn := make([]chan byte, p.threads)
@@ -187,7 +177,51 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 
 
+	// cells still alive after last turn
+	finalAlive := finalAlive(p, world)
 
+	//writing the pgm file
+	writePGM(p, d, world)
+
+	// Make sure that the Io has finished any output before exiting.
+	d.io.command <- ioCheckIdle
+	<-d.io.idle
+
+	// Return the coordinates of cells that are still alive.
+	alive <- finalAlive
+}
+
+func writePGM (p golParams, d distributorChans, world [][]byte) {
+	d.io.command <- ioOutput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x") + "_" + strconv.Itoa(p.turns) + "turns"
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			d.io.outVal <- world[y][x]
+		}
+	}
+}
+
+func requestPGM(p golParams, d distributorChans)  {
+	d.io.command <- ioInput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x")
+}
+
+// The io goroutine sends the requested image byte by byte, in rows.
+func receiveWorld(p golParams, d distributorChans) [][]byte {
+	world:= createMatrix(p.imageHeight, p.imageWidth)
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			val := <-d.io.inputVal
+			if val != 0 {
+				world[y][x] = val
+			}
+		}
+	}
+	return world
+}
+
+//returns a slice of slices that are alive at the end of the game
+func finalAlive(p golParams, world [][]byte) []cell {
 	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
 	var finalAlive []cell
 	// Go through the world and append the cells that are still alive.
@@ -199,20 +233,5 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 	}
-
-	//writing the pgm file
-	d.io.command <- ioOutput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x") + "_" + strconv.Itoa(p.turns) + "turns"
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			d.io.outVal <- world[y][x]
-		}
-	}
-
-	// Make sure that the Io has finished any output before exiting.
-	d.io.command <- ioCheckIdle
-	<-d.io.idle
-
-	// Return the coordinates of cells that are still alive.
-	alive <- finalAlive
+	return finalAlive
 }

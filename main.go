@@ -94,7 +94,7 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 
 	aliveCells := make(chan []cell)
 
-	go distributor(p, dChans, aliveCells)
+	go distributor(p, dChans, aliveCells, keyChan)
 	go pgmIo(p, ioChans)
 
 	alive := <-aliveCells
@@ -126,11 +126,13 @@ func main() {
 
 	flag.Parse()
 
-	//params.turns = 10000000000
-	params.turns = 5
+	params.turns = 10000000000
+	//params.turns = 5
+
+	keyChan := make(chan rune)
 
 	startControlServer(params)
-	go getKeyboardCommand(nil)
-	gameOfLife(params, nil)
+	go getKeyboardCommand(keyChan)
+	gameOfLife(params, keyChan)
 	StopControlServer()
 }

@@ -26,6 +26,16 @@ func getNumberOfNeighbors(world [][]byte, y,x,height,width int) int {
 	return neighbors
 }
 
+func writePGM (p golParams, d distributorChans, world [][]byte) {
+	d.io.command <- ioOutput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x") + "_" + strconv.Itoa(p.turns) + "turns"
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			d.io.outVal <- world[y][x]
+		}
+	}
+}
+
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
@@ -93,13 +103,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	}
 
 	//writing the pgm file
-	d.io.command <- ioOutput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x") + "_" + strconv.Itoa(p.turns) + "turns"
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			d.io.outVal <- world[y][x]
-		}
-	}
+	writePGM(p, d, world)
 
 	// Make sure that the Io has finished any output before exiting.
 	d.io.command <- ioCheckIdle
