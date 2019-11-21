@@ -1,0 +1,335 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+)
+
+
+const dead = 0x00
+const live  = 0xFF
+
+
+// calculates the length each channel should hold and stores it in an array where the index indicates the channel.
+// At first, every channel is given the maximum length that can be shared equally.
+// The remaining is then added one by one to each channel. This way, work can be shared as equally as possible
+func calculate(height, threads int)[]int{
+	numbers := make([]int, threads)
+	divide := int(math.Floor(float64(height / threads)))
+	remaining := height - (threads*divide)
+	for i:=range numbers{
+		numbers[i] = divide
+	}
+	if remaining != 0{
+		for i:=0; i<remaining; i++{
+			numbers[i] ++
+		}
+	}
+	return numbers
+}
+
+
+func createMatrix(height, width int) [][]byte{
+	matrix := make([][]byte, height)
+	for i := range matrix {
+		matrix[i] = make([]byte, width)
+	}
+	return matrix
+}
+
+//sending the appropriate data to workers
+func splitSend(heightOfSmallerArray, width, height, y, counter int, workersIn []chan byte, world [][]byte) {
+
+	// sends the chunk we need to perform the logic on and
+	// 1 more layer at the top and 1 more at the bottom(so the logic is correct)
+	for h:=y-1; h<heightOfSmallerArray+1+y; h++ {
+		for x:=0; x<width; x++ {
+			var t int
+			if h<0 {
+				//top level
+				t=(h+height)%height
+			} else if h>=height {
+				//bottom level
+				t=(h-height)%height
+			} else {
+				//middle level
+				t=h
+			}
+			workersIn[counter]<-world[t][x]
+		}
+	}
+}
+
+//splits the image into parts so workers can work on different parts in parallel
+//for each split send, the appropriate length (heightOfSmallerArray) is given using information from numbers array
+//heightSoFar stores the y-index each channel should start taking bytes from, and its updated each time.
+func split(height, width int, workersIn [] chan byte, world [][]byte, numbers []int){
+
+	counter:=0
+	heightSoFar:=0
+
+	for i := range numbers {
+		go splitSend(numbers[i], width, height, heightSoFar, counter, workersIn, world)
+		counter ++
+		heightSoFar = heightSoFar + numbers[i]
+	}
+	//splitting the process of sending the data to different workers
+	/*for y:=0; y<height; y=y+heightOfSmallerArray {
+		go splitSend(heightOfSmallerArray, width, height, y, counter, workersIn, world)
+		counter++
+	}*/
+}
+
+//performs the logic of the game on the given chunk
+func worker (channelin, channelout chan byte, heightOfSmallerArray, width int){
+	heightOfSmallerArrayWithExtraRows:= heightOfSmallerArray+2
+
+
+	world:=createMatrix(heightOfSmallerArrayWithExtraRows, width)
+
+	//we create a world for the next round in a new matrix
+	//so the intermediate results dont affect current world
+	//as this would change the output
+	newWorld:=createMatrix(heightOfSmallerArrayWithExtraRows, width)
+
+	for {
+		//initialise world and new world in current state
+		for y := 0; y < heightOfSmallerArrayWithExtraRows; y++ {
+			for x := 0; x < width; x++ {
+				val := <-channelin
+				world[y][x] = val
+				newWorld[y][x] = val
+			}
+		}
+		//
+		for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
+			for x := 0; x < width; x++ {
+				//counting the number of alive neighbors
+				neighbors := getNumberOfNeighbors(world, y, x, heightOfSmallerArrayWithExtraRows, width)
+				//performing the actual logic of the game of life
+				//and updating the world to the new state
+				if neighbors < 2 || neighbors > 3 {
+					newWorld[y][x] = dead
+				} else if neighbors == 3 {
+					newWorld[y][x] = live
+				}
+			}
+		}
+		//sending the updated world to the distributor
+		for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
+			for x := 0; x < width; x++ {
+				channelout <- newWorld[y][x]
+			}
+		}
+	}
+}
+
+
+//combines chunks of world created by workers into one world using information from the number array
+//it also returns the number of alive cells in the combined world
+
+func combine(workersOut [] chan byte, heightOfBigArray, width, threads, numberOfAliveCells int, number []int)([][]byte, int){
+
+	world:=createMatrix(0, 0)
+	for i:=0; i<threads; i++ {
+		tempWorld:=createMatrix(number[i], width)
+		for y:=0; y<number[i]; y++ {
+			for x:=0; x<width; x++ {
+				val:=<-workersOut[i]
+				tempWorld[y][x] = val
+			}
+		}
+		world = append(world, tempWorld...)
+
+	}
+	//number of alive cells in the processed/combined world
+	numberOfAliveCells = countAlive(heightOfBigArray, width, world)
+	return world, numberOfAliveCells
+}
+
+
+
+func getNumberOfNeighbors(world [][]byte, y,x,height,width int) int {
+	neighbors := 0
+	for i:=0; i<3;i++{
+		for j:=0; j<3; j++{
+
+			if world[(y-1+i+height)%height][(x-1+j+width)%width] == 0xFF{
+				neighbors++
+			}
+		}
+	}
+	// we iterate through the main cell as well so we need to subtract it from the count
+	if world[y][x] == live {
+		neighbors--
+	}
+	return neighbors
+}
+
+
+
+// distributor divides the work between workers and interacts with other goroutines.
+func distributor(p golParams, d distributorChans, alive chan []cell, keyChan <-chan rune) {
+
+	// Request the io goroutine to read in the image with the given filename.
+	requestPGM(p,d)
+
+	// creating the initial world from input image
+	world := receiveWorld(p, d)
+
+	//creating slices of channels for workers
+	workersIn := make([]chan byte, p.threads)
+	workersOut := make([]chan byte, p.threads)
+
+	//creating channels
+	for i := range workersIn {
+		workersIn[i] = make(chan byte)
+		workersOut[i] = make(chan byte)
+	}
+
+
+	// ticker sends a value through the channel every 2s
+	ticker := time.NewTicker(2 * time.Second)
+
+	//stores number of alive cells
+	var numberOfAliveCells int
+
+	//create number array
+	number := make([]int, p.threads)
+	number = calculate(p.imageHeight, p.threads)
+
+	//we only need to create the workers once (using information from number array
+	for i:=0; i<p.threads; i++{
+		go worker(workersIn[i], workersOut[i], number[i], p.imageWidth)
+	}
+
+	//performing turns of the game
+loop:
+	for t:=0; t<p.turns; t++{
+		select {
+		//catching keyboard input
+		case in := <-keyChan :
+			key := string(in)
+			if key == "s" {
+				// generate a PGM file with the current state of the board
+				fmt.Println("Outputting PGM at turn: " + strconv.Itoa(t))
+				writePGM(p, d, world, t)
+			} else if key == "p" {
+				//  pause the processing and print the current turn that is being processed.
+				fmt.Println("Processing paused, current turn: " + strconv.Itoa(t))
+				// after pausing you can either resume processing by pressing 'p' again,
+				// press 's' to generate a PGM file at the stopped turn
+				// or press 'q' to generate a PGM file at the turn and exit the program
+				for {
+					in2 := <-keyChan
+					key2 := string(in2)
+					if key2 == "p" {
+						fmt.Println("Continuing")
+						break
+					} else if key2 == "s" {
+						fmt.Println("Outputting PGM at turn: " + strconv.Itoa(t))
+						writePGM(p, d, world, t)
+					} else if key2 == "q" {
+						fmt.Println("Outputting PGM and terminating at turn: " + strconv.Itoa(t))
+						writePGM(p, d, world, t)
+						break loop
+					}
+				}
+			} else if key == "q" {
+				// generate a PGM file with the final state of the board and then terminate the program
+				fmt.Println("Outputting PGM and terminating at turn: " + strconv.Itoa(t))
+				writePGM(p, d, world, t)
+				break loop
+			}
+		//prints number of cells when a value is sent through the channel
+		case <-ticker.C:
+			fmt.Println("Number of alive cells =", numberOfAliveCells)
+		//performing turn
+		default:
+			//split array into parts for each worker
+			split(p.imageHeight, p.imageWidth, workersIn, world, number)
+			//combine the results and also update number of alive cells
+			world , numberOfAliveCells = combine(workersOut, p.imageHeight, p.imageWidth, p.threads, numberOfAliveCells, number)
+		}
+
+		if t == p.turns - 1 {
+			//writing the pgm file after last turn
+			writePGM(p, d, world, t)
+		}
+	}
+
+
+
+
+	// cells still alive after last turn
+	finalAlive := finalAlive(p, world)
+
+	// Make sure that the Io has finished any output before exiting.
+	d.io.command <- ioCheckIdle
+	<-d.io.idle
+
+	// Return the coordinates of cells that are still alive.
+	alive <- finalAlive
+}
+
+func writePGM (p golParams, d distributorChans, world [][]byte, turn int) {
+	d.io.command <- ioOutput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x") + "_" + strconv.Itoa(turn) + "turns"
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			d.io.outVal <- world[y][x]
+		}
+	}
+}
+
+func requestPGM(p golParams, d distributorChans)  {
+	d.io.command <- ioInput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x")
+}
+
+// The io goroutine sends the requested image byte by byte, in rows.
+func receiveWorld(p golParams, d distributorChans) [][]byte {
+	world:= createMatrix(p.imageHeight, p.imageWidth)
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			val := <-d.io.inputVal
+			if val != 0 {
+				world[y][x] = val
+			}
+		}
+	}
+	return world
+}
+
+//returns a slice of slices that are alive at the end of the game
+func finalAlive(p golParams, world [][]byte) []cell {
+	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
+	var finalAlive []cell
+	// Go through the world and append the cells that are still alive.
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			if world[y][x] != 0 {
+				finalAlive = append(finalAlive, cell{x: x, y: y})
+			}
+		}
+	}
+	return finalAlive
+}
+
+//counts number of alive cells in the given slice
+func countAlive(height, width int, world [][]byte) int {
+	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
+	var number = 0
+	// Go through the world and append the cells that are still alive.
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			if world[y][x] != 0 {
+				number++
+			}
+		}
+	}
+	return number
+}
