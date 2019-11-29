@@ -307,8 +307,8 @@ loop:
 		//performing turn
 		default:
 			doTurn(p.threads, w, true)
+			t++
 		}
-		t++
 	}
 	//number of alive cells in the processed/combined world
 
