@@ -216,7 +216,7 @@ loop:
 			}
 		//prints number of cells when a value is sent through the channel
 		case <-ticker.C:
-			fmt.Println("Number of alive cells =", numberOfAliveCells)
+			fmt.Println("Number of alive cells = ", numberOfAliveCells)
 		//performing turn
 		default:
 			//split array into parts for each worker
@@ -291,7 +291,7 @@ func finalAlive(p golParams, world [][]byte) []cell {
 
 //counts number of alive cells in the given slice
 func countAlive(height, width int, world [][]byte) int {
-	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
+	// Create an empty slice to store coordinates of cells that are still alive after x turns are done.
 	var number = 0
 	// Go through the world and append the cells that are still alive.
 	for y := 0; y < height; y++ {

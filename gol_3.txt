@@ -64,7 +64,6 @@ func splitSend(heightOfSmallerArray, width, height, y, counter int, workersIn []
 }
 
 //splits the image into parts so workers can work on different parts in parallel
-//for each split send, the appropriate length (heightOfSmallerArray) is given using information from numbers array
 //heightSoFar stores the y-index each channel should start taking bytes from, and its updated each time.
 func split(height, width int, workersIn [] chan byte, world [][]byte, numbers []int){
 
