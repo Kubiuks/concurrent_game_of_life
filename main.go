@@ -127,7 +127,6 @@ func main() {
 	flag.Parse()
 
 	params.turns = 10000000000
-	//params.turns = 5
 
 	keyChan := make(chan rune)
 

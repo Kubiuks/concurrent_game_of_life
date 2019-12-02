@@ -178,7 +178,8 @@ func worker (w workerStruct, me, heightOfSmallerArray, width int){
 	//as this would change the output
 	newWorld := createMatrix(heightOfSmallerArrayWithExtraRows, width)
 
-	//initialise world and new world in current state only on first turn
+
+	//initialise world and new world in current state only before first turn is performed
 	for y := 0; y < heightOfSmallerArrayWithExtraRows; y++ {
 		for x := 0; x < width; x++ {
 			val := <-w.workerIn
@@ -187,8 +188,35 @@ func worker (w workerStruct, me, heightOfSmallerArray, width int){
 		}
 	}
 
+	//create a look up table that stores the number of alive neighbours each cell has
+	numberOfAliveNeighbours := make([][]int, heightOfSmallerArrayWithExtraRows)
+	newNumberOfAliveNeighbours := make([][]int, heightOfSmallerArrayWithExtraRows)
+	for i := range numberOfAliveNeighbours {
+		numberOfAliveNeighbours[i] = make([]int, width)
+		newNumberOfAliveNeighbours[i] = make([]int, width)
+	}
 
-	for {
+	//populating the look up table before first turn
+	//we can do because split function sent the extra top and bottom rows
+	for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
+		for x := 0; x < width; x++ {
+			//counting the number of alive neighbors
+			numberOfAliveNeighbours[y][x] = getNumberOfNeighbors(world, y, x, heightOfSmallerArrayWithExtraRows, width)
+
+		}
+	}
+
+	for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
+		for x := 0; x < width; x++ {
+			//counting the number of alive neighbors
+			newNumberOfAliveNeighbours[y][x] = numberOfAliveNeighbours[y][x]
+
+		}
+	}
+
+
+	// performing turns
+		for {
 		b := <-w.workerTurn
 		// if we send true we perform a turn
 		//if we send false we want to get the state of the world
@@ -213,28 +241,70 @@ func worker (w workerStruct, me, heightOfSmallerArray, width int){
 				}
 			}
 
+
+			//top and bottom layers neighbours change so calculate them again
+			for x := 0; x < width; x++ {
+				//counting the number of alive neighbors
+				numberOfAliveNeighbours[1][x] = getNumberOfNeighbors(world, 1, x, heightOfSmallerArrayWithExtraRows, width)
+			}
+
+			for x := 0; x < width; x++ {
+				//counting the number of alive neighbors
+				numberOfAliveNeighbours[heightOfSmallerArrayWithExtraRows-2][x] = getNumberOfNeighbors(world, heightOfSmallerArrayWithExtraRows-2, x, heightOfSmallerArrayWithExtraRows, width)
+			}
+
+
 			//game logic
 			for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
 				for x := 0; x < width; x++ {
-					//counting the number of alive neighbors
-					neighbors := getNumberOfNeighbors(world, y, x, heightOfSmallerArrayWithExtraRows, width)
 					//performing the actual logic of the game of life
 					//and updating the world to the new state
-					if neighbors < 2 || neighbors > 3 {
-						newWorld[y][x] = dead
-					} else if neighbors == 3 {
+					//first we skip dead cells that are going to stay dead
+
+
+					if world[y][x] == dead && numberOfAliveNeighbours[y][x] != 3 {
+						continue
+					}
+					//if a cell is alive we either kill it or keep alive
+					if world[y][x] == live {
+						if numberOfAliveNeighbours[y][x] < 2 || numberOfAliveNeighbours[y][x] > 3 {
+							newWorld[y][x] = dead
+							//if we kill it we update number of neighbours of adjacent cells'
+							for i:=-1; i<2;i++{
+								for j:=-1; j<2; j++{
+
+									newNumberOfAliveNeighbours[y+i][(x+j+width)%width]--
+									if i == 0 && j == 0 {
+										newNumberOfAliveNeighbours[y+i][(x+j+width)%width]++
+									}
+								}
+							}
+						}
+					} else if numberOfAliveNeighbours[y][x] == 3 {
 						newWorld[y][x] = live
+						//if the cell is going to start living we update number of neighbours of adjacent cells'
+						for i:=-1; i<2;i++{
+							for j:=-1; j<2; j++{
+
+								newNumberOfAliveNeighbours[y+i][(x+j+width)%width]++
+								if i == 0 && j == 0 {
+									newNumberOfAliveNeighbours[y+i][(x+j+width)%width]--
+								}
+							}
+						}
 					}
 				}
 			}
 
 			// as we dont recreate the world after each round,
-			// we need to update our world for next turn
+			// we need to update our world and neighbour count for next turn
 			for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
 				for x := 0; x < width; x++ {
 					world[y][x] = newWorld[y][x]
+					numberOfAliveNeighbours[y][x] = newNumberOfAliveNeighbours[y][x]
 				}
 			}
+
 
 		} else {
 			//sending the updated world to the distributor
@@ -287,6 +357,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell, keyChan <-c
 		go worker(w[i], i, number[i], p.imageWidth)
 	}
 
+	//we split image before the first turn
 	split(p.imageHeight, p.imageWidth, w, world, number)
 
 	t := 0
@@ -372,7 +443,7 @@ func writePGM (p golParams, d distributorChans, world [][]byte, turn int,
 
 	doTurn(p.threads, w, false)
 
-	//combine the results and also update number of alive cells
+	//combine the results
 	world = combine(w, p.imageWidth, p.threads, number, tempWorlds)
 
 	d.io.command <- ioOutput
@@ -407,7 +478,7 @@ func receiveWorld(p golParams, d distributorChans) [][]byte {
 func finalAlive(p golParams, world [][]byte, w []workerStruct, number []int, tempWorlds []chan [][]byte) []cell {
 	doTurn(p.threads, w, false)
 
-	//combine the results and also update number of alive cells
+	//combine the results
 	world = combine(w, p.imageWidth, p.threads, number, tempWorlds)
 
 	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
@@ -429,7 +500,7 @@ func countAlive(p golParams, world [][]byte,
 
 	doTurn(p.threads, w, false)
 
-	//combine the results and also update number of alive cells
+	//combine the results
 	world = combine(w, p.imageWidth, p.threads, number, tempWorlds)
 
 	var count = 0
