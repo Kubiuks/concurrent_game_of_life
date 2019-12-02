@@ -206,9 +206,10 @@ func worker (w workerStruct, me, heightOfSmallerArray, width int){
 		}
 	}
 
+	//we need two lookup tables so the one being updated during the turn
+	// doesnt influence the current logic
 	for y := 1; y < heightOfSmallerArrayWithExtraRows-1; y++ {
 		for x := 0; x < width; x++ {
-			//counting the number of alive neighbors
 			newNumberOfAliveNeighbours[y][x] = numberOfAliveNeighbours[y][x]
 
 		}
@@ -244,12 +245,10 @@ func worker (w workerStruct, me, heightOfSmallerArray, width int){
 
 			//top and bottom layers neighbours change so calculate them again
 			for x := 0; x < width; x++ {
-				//counting the number of alive neighbors
 				numberOfAliveNeighbours[1][x] = getNumberOfNeighbors(world, 1, x, heightOfSmallerArrayWithExtraRows, width)
 			}
 
 			for x := 0; x < width; x++ {
-				//counting the number of alive neighbors
 				numberOfAliveNeighbours[heightOfSmallerArrayWithExtraRows-2][x] = getNumberOfNeighbors(world, heightOfSmallerArrayWithExtraRows-2, x, heightOfSmallerArrayWithExtraRows, width)
 			}
 
@@ -260,8 +259,6 @@ func worker (w workerStruct, me, heightOfSmallerArray, width int){
 					//performing the actual logic of the game of life
 					//and updating the world to the new state
 					//first we skip dead cells that are going to stay dead
-
-
 					if world[y][x] == dead && numberOfAliveNeighbours[y][x] != 3 {
 						continue
 					}
