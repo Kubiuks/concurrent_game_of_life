@@ -1,1 +1,1 @@
-Coursework for Concurrent Computing
+Implementation of Game of Life in Go
